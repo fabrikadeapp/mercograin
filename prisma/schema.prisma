@@ -1,0 +1,196 @@
+// prisma/schema.prisma
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================
+// AUTENTICAÇÃO & USUÁRIOS
+// ============================================
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  senha     String   // Hash bcrypt
+  nome      String
+  role      String   @default("user") // 'admin' | 'user' | 'viewer'
+  criadoEm  DateTime @default(now())
+  atualizadoEm DateTime @updatedAt
+
+  clientes  Cliente[]
+
+  @@index([email])
+}
+
+// ============================================
+// CLIENTES (CRM)
+// ============================================
+
+model Cliente {
+  id        String   @id @default(cuid())
+  usuarioId String
+  usuario   User     @relation(fields: [usuarioId], references: [id], onDelete: Cascade)
+  nome      String   @db.VarChar(255)
+  tipo      String   @default("ambos") // 'comprador' | 'vendedor' | 'ambos'
+  email     String?  @db.VarChar(255)
+  whatsapp  String?  @db.VarChar(20)
+  cnpj      String?  @unique @db.VarChar(18)
+  endereco  String?  @db.Text
+  telefone  String?  @db.VarChar(20)
+  ativo     Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  propostas Proposta[]
+  contratos Contrato[]
+  boletos   Boleto[]
+
+  @@index([email])
+  @@index([cnpj])
+  @@index([tipo])
+}
+
+// ============================================
+// COTAÇÕES (CBOT via TradingView + Investing.com)
+// ============================================
+
+model Cotacao {
+  id         String   @id @default(cuid())
+  grao       String   // 'soja' | 'milho' | 'trigo'
+  preco      Decimal  @db.Decimal(10, 2) // cents/bushel
+  simbolo    String   @db.VarChar(10) // 'ZS' | 'ZC' | 'ZW'
+  fonte      String   @default("TradingView") // TradingView | Investing.com
+  dolarReal  Decimal? @db.Decimal(10, 4) // Taxa USD/BRL nessa hora
+  volume     Int?     // volume negociado
+  data       DateTime @default(now())
+
+  @@index([grao])
+  @@index([data])
+  @@index([simbolo])
+}
+
+model TaxaCambio {
+  id        String   @id @default(cuid())
+  origem    String   @default("USD")
+  destino   String   @default("BRL")
+  taxa      Decimal  @db.Decimal(10, 4)
+  fonte     String   @default("Investing.com")
+  data      DateTime @default(now())
+
+  @@unique([origem, destino, data])
+  @@index([data])
+}
+
+// ============================================
+// PROPOSTAS COMERCIAIS
+// ============================================
+
+model Proposta {
+  id          String   @id @default(cuid())
+  numero      String   @unique @db.VarChar(50)
+  clienteId   String
+  cliente     Cliente  @relation(fields: [clienteId], references: [id], onDelete: Cascade)
+  tipo        String   // 'venda' | 'compra'
+  graos       Json     // [{grao: 'soja', quantidade: 100, preco: 65.50, subtotal: 6550}, ...]
+  valorTotal  Decimal  @db.Decimal(15, 2)
+  status      String   @default("rascunho") // 'rascunho' | 'enviada' | 'aceita' | 'rejeitada'
+  descricao   String?  @db.Text
+  observacoes String?  @db.Text
+  criadaEm    DateTime @default(now())
+  enviadaEm   DateTime?
+  validadeEm  DateTime
+  atualizadaEm DateTime @updatedAt
+
+  contratos Contrato[]
+
+  @@index([clienteId])
+  @@index([status])
+  @@index([validadeEm])
+}
+
+// ============================================
+// CONTRATOS
+// ============================================
+
+model Contrato {
+  id            String   @id @default(cuid())
+  numero        String   @unique @db.VarChar(50)
+  proposIdFk    String
+  proposta      Proposta @relation(fields: [proposIdFk], references: [id], onDelete: Cascade)
+  clienteId     String
+  cliente       Cliente  @relation(fields: [clienteId], references: [id], onDelete: Cascade)
+  dataInicio    DateTime
+  dataFim       DateTime?
+  pdfUrl        String?  @db.Text
+  assinadoEm    DateTime?
+  statusAssinatura String @default("pendente") // 'pendente' | 'assinado' | 'rejeitado'
+  criadoEm      DateTime @default(now())
+  atualizadoEm  DateTime @updatedAt
+
+  boletos Boleto[]
+
+  @@index([clienteId])
+  @@index([proposIdFk])
+  @@index([assinadoEm])
+}
+
+// ============================================
+// BOLETOS DE COBRANÇA
+// ============================================
+
+model Boleto {
+  id             String   @id @default(cuid())
+  numero         String   @unique @db.VarChar(50)
+  contratoIdFk   String?
+  contrato       Contrato? @relation(fields: [contratoIdFk], references: [id], onDelete: SetNull)
+  clienteId      String
+  cliente        Cliente  @relation(fields: [clienteId], references: [id], onDelete: Cascade)
+  banco          String   @db.VarChar(20) // 'itau' | 'sicredi' | 'nubank' | 'c6' | 'bradesco' | 'santander' | 'caixa'
+  valor          Decimal  @db.Decimal(15, 2)
+  vencimento     DateTime
+  status         String   @default("aberto") // 'aberto' | 'pago' | 'vencido' | 'cancelado'
+  linkBoleto     String?  @db.Text
+  braspagId      String?  @db.VarChar(100) // ID Braspag para rastreamento
+  confirmadoEm   DateTime?
+  criadoEm       DateTime @default(now())
+  atualizadoEm   DateTime @updatedAt
+
+  @@index([clienteId])
+  @@index([status])
+  @@index([vencimento])
+  @@index([braspagId])
+}
+
+// ============================================
+// WEBHOOKS LOG (auditoria)
+// ============================================
+
+model WebhookLog {
+  id        String   @id @default(cuid())
+  tipo      String   // 'tradingview' | 'braspag' | 'signaturely'
+  payload   Json
+  status    Int?     // HTTP status
+  erro      String?  @db.Text
+  criadoEm  DateTime @default(now())
+
+  @@index([tipo])
+  @@index([criadoEm])
+}
+
+// ============================================
+// CACHE DE DADOS (Investing.com, etc)
+// ============================================
+
+model CacheData {
+  id        String   @id @default(cuid())
+  chave     String   @unique @db.VarChar(255)
+  valor     Json
+  expiracaoEm DateTime
+  criadoEm  DateTime @default(now())
+
+  @@index([expiracaoEm])
+}

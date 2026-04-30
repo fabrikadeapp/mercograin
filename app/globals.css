@@ -1,0 +1,20 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  @apply bg-white text-gray-900;
+}
+
+/* Customizações globais */
+button {
+  @apply transition-all duration-200;
+}
+
+a {
+  @apply text-blue-600 hover:text-blue-800 transition-colors;
+}
